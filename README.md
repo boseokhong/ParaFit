@@ -18,14 +18,11 @@ $$
 - Ridge regularization $(\lambda)$ on Fᵢ is available.
 
 **Baseline (classical Bleaney):**  
-$$
-S_2 = 0, \quad D_3 = 0
-$$
+$S_2 = 0, D_3 = 0$
 
 **Linear two-term approximation (per nucleus):**  
-$$
-\delta \approx \frac{a}{T} + \frac{b}{T^2}
-$$
+$\delta \approx \frac{a}{T} + \frac{b}{T^2}$
+
 so that $(D_{2,i} \approx b/G_i)$ when $(S_2\approx 0, D_3\approx 0)$.
 
 ---
