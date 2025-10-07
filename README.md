@@ -9,8 +9,8 @@ This repository provides an interactive GUI to fit variable-temperature paramagn
 Fitting for each nucleus *i*:
 
 $$
-\delta_i(T) = F_i\!\left(\frac{S_1}{T}+\frac{S_2}{T^2}\right)
-            + G_i\!\left(\frac{D_2}{T^2}+\frac{D_3}{T^3}\right)
+\delta_i(T) = F_i\left(\frac{S_1}{T}+\frac{S_2}{T^2}\right)
+            + G_i\left(\frac{D_2}{T^2}+\frac{D_3}{T^3}\right)
 $$
 
 - **Globals (shared):** S₁, S₂, D₂, D₃  
