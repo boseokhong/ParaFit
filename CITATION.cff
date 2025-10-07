@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+title: "Extended Bleaney Method Global Fitting GUI"
+version: "0.1.0"
+date-released: "2025-10-07"
+authors:
+  - name: "Boseok Hong"
+license: "MIT"
+keywords:
+  - paramagnetic NMR
+  - Bleaney model
+  - pseudocontact contribution
+  - Fermi contact contribution
