@@ -10,7 +10,7 @@ authors:
     affiliation: Helmholtz-Zentrum Dresden-Rossendorf (HZDR)
     orcid: 'https://orcid.org/0009-0005-5866-682X'
 repository-code: 'https://https://github.com/boseokhong/Extended_Bleaney_Fitting'
-license: "MIT"
+license: "BSD-3-Clause"
 keywords:
   - paramagnetic NMR
   - Bleaney model
