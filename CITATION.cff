@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "Extended Bleaney Method Global Fitting GUI"
+title: "ParaFit — Bleaney Model Fitting GUI"
 type: software
 version: "0.1.0"
 date-released: "2025-10-07"
@@ -9,7 +9,7 @@ authors:
     email: bshong66@gmail.com
     affiliation: Helmholtz-Zentrum Dresden-Rossendorf (HZDR)
     orcid: 'https://orcid.org/0009-0005-5866-682X'
-repository-code: 'https://https://github.com/boseokhong/Extended_Bleaney_Fitting'
+repository-code: 'https://https://github.com/boseokhong/ParaFit'
 license: "BSD-3-Clause"
 keywords:
   - paramagnetic NMR
