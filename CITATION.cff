@@ -1,9 +1,15 @@
 cff-version: 1.2.0
 title: "Extended Bleaney Method Global Fitting GUI"
+type: software
 version: "0.1.0"
 date-released: "2025-10-07"
 authors:
-  - name: "Boseok Hong"
+  - given-names: Boseok
+    family-names: Hong
+    email: bshong66@gmail.com
+    affiliation: Helmholtz-Zentrum Dresden-Rossendorf (HZDR)
+    orcid: 'https://orcid.org/0009-0005-5866-682X'
+repository-code: 'https://https://github.com/boseokhong/Extended_Bleaney_Fitting'
 license: "MIT"
 keywords:
   - paramagnetic NMR
