@@ -1,4 +1,4 @@
-# Extended Bleaney Method — Global Fitting GUI
+# ParaFit — Bleaney Model Fitting GUI
 
 This repository provides an interactive GUI to fit variable-temperature paramagnetic NMR shifts to the **extended Bleaney model** with **variable projection** for per-nucleus contact factors $F_i$ and shared global parameters $(S_1,S_2,D_2,D_3)$. It also exports diagnostics, linear approximations, and $Δχ_ax(T)$ in multiple unit conventions.
 
@@ -18,14 +18,11 @@ $$
 - Ridge regularization $(\lambda)$ on Fᵢ is available.
 
 **Baseline (classical Bleaney):**  
-$$
-S_2 = 0, \quad D_3 = 0
-$$
+$S_2 = 0, D_3 = 0$
 
 **Linear two-term approximation (per nucleus):**  
-$$
-\delta \approx \frac{a}{T} + \frac{b}{T^2}
-$$
+$\delta \approx \frac{a}{T} + \frac{b}{T^2}$
+
 so that $(D_{2,i} \approx b/G_i)$ when $(S_2\approx 0, D_3\approx 0)$.
 
 ---
