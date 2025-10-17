@@ -38,6 +38,7 @@ import scipy.constants as const
 class Dataset:
     groups: Dict[str, pd.DataFrame]
     ridge_lambda: float = 0.0
+    has_G: bool = True  # Gi data available?
 
 _nat_re = re.compile(r'(\d+)')
 def natural_key(s) -> tuple:
@@ -46,23 +47,45 @@ def natural_key(s) -> tuple:
     return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
 
 def prepare_dataset(df: pd.DataFrame,
-                    col_nuc: str, col_T: str, col_delta: str, col_G: str,
+                    col_nuc: str, col_T: str, col_delta: str,
+                    col_G: Optional[str] = None,
                     col_w: Optional[str] = None,
                     col_pcs_guess: Optional[str] = None) -> Dataset:
-    req = [col_nuc, col_T, col_delta, col_G]
+    """
+    Gi 없이도 linear approximation이 가능하도록 Gi를 옵션으로 처리.
+    - 필수 컬럼: nucleus, T, delta
+    - 선택 컬럼: G, weight, PCS_guess
+    - 반환: Dataset(groups=..., has_G=bool)
+    """
+    # --- 필수 컬럼 점검 ---
+    req = [col_nuc, col_T, col_delta]
     for c in req:
         if c not in df.columns:
             raise ValueError(f"Missing required column '{c}' in CSV.")
+
+    # --- Gi 유무 판단 ---
+    has_G = (col_G is not None) and (col_G in df.columns)
+
+    # --- weight 컬럼 처리 ---
     if col_w is not None and col_w not in df.columns:
         col_w = None
 
     df = df.copy()
-    cols = req + ([col_w] if col_w else []) + ([col_pcs_guess] if (col_pcs_guess and col_pcs_guess in df.columns) else [])
-    df = df[cols].dropna(subset=[col_T, col_delta, col_G])  # guess는 NaN 허용
 
+    # 선택 컬럼 포함 목록 구성 (Gi/guess는 없어도 진행)
+    cols = req \
+         + ([col_G] if has_G else []) \
+         + ([col_w] if col_w else []) \
+         + ([col_pcs_guess] if (col_pcs_guess and col_pcs_guess in df.columns) else [])
+
+    # 필수 컬럼만 NaN 제거 (Gi/guess는 NaN 허용)
+    df = df[cols].dropna(subset=[col_T, col_delta])
+
+    # 온도 sanity check
     if (df[col_T] < 1).any():
         raise ValueError("Temperatures must be in Kelvin (found < 1 K).")
 
+    # weight 없으면 1.0 부여
     if col_w is None:
         df["_w_"] = 1.0
         col_w = "_w_"
@@ -71,18 +94,34 @@ def prepare_dataset(df: pd.DataFrame,
         if (df[col_w] <= 0).any():
             raise ValueError("All weights must be > 0.")
 
+    # 정렬
     df = df.sort_values([col_nuc, col_T]).reset_index(drop=True)
 
+    # --- nucleus별 그룹 구성 ---
     groups: Dict[str, pd.DataFrame] = {}
     for key, sub in df.groupby(col_nuc):
-        renamed = sub.rename(columns={col_T: "T", col_delta: "delta", col_G: "G", col_w: "w"})
-        # 원본 Å^-3 보존 및 이후 SI 스케일링 로직은 on_fit()에서 동일
+        # 기본 rename (필수 3개 + weight)
+        renamed = sub.rename(columns={col_T: "T", col_delta: "delta", col_w: "w"})
+
+        # Gi가 있으면 G→"G", 그리고 "G_raw" 보존
+        if has_G:
+            renamed = renamed.rename(columns={col_G: "G"})
+            renamed["G_raw"] = renamed["G"].astype(float)
+        else:
+            # Gi가 없으면 G_raw만 NaN으로 생성 (downstream 호환)
+            renamed["G_raw"] = np.nan
+
+        # PCS guess가 있으면 부착
         if col_pcs_guess and (col_pcs_guess in sub.columns):
             renamed["pcs_guess"] = sub[col_pcs_guess].astype(float)
+
         groups[str(key)] = renamed
 
     groups = {k: groups[k] for k in sorted(groups.keys(), key=natural_key)}
-    return Dataset(groups=groups)
+
+    # Dataset에 has_G 플래그를 담아 반환 (Dataset 정의에 has_G: bool 필드가 있어야 함)
+    return Dataset(groups=groups, ridge_lambda=0.0, has_G=has_G)
+
 
 
 def solve_Fi_for_group(sub: pd.DataFrame,
@@ -1094,37 +1133,49 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No data", "Please load a CSV first.")
             return
 
-        # read column selections
+        # ---------- read column selections (Gi optional) ----------
         try:
             col_nuc = self.get_cmb_value(self.cmb_nuc, required=True, name="nucleus")
-            col_T   = self.get_cmb_value(self.cmb_T, required=True, name="T (K)")
+            col_T = self.get_cmb_value(self.cmb_T, required=True, name="T (K)")
             col_del = self.get_cmb_value(self.cmb_delta, required=True, name="delta_para (ppm)")
-            col_G   = self.get_cmb_value(self.cmb_G, required=True, name="G_i")
-            col_w   = self.get_cmb_value(self.cmb_w, required=False)
+
+            tmp_G = self.get_cmb_value(self.cmb_G, required=False)
+            col_G = None if (tmp_G in ("", "<none>")) else tmp_G  # ← Gi를 옵션으로
+
+            col_w = self.get_cmb_value(self.cmb_w, required=False)
             col_pcs_guess = self.get_cmb_value(self.cmb_pcs_guess, required=False)
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             return
 
+        # ---------- dataset 준비 (Gi 유무를 내부 플래그로 보관) ----------
         try:
-            ds = prepare_dataset(self.df, col_nuc, col_T, col_del, col_G,
-                                 col_w if col_w != "<none>" else None,
-                                 col_pcs_guess if col_pcs_guess != "<none>" else None)
-            for key in sorted(ds.groups.keys(), key=natural_key):
-                sub = ds.groups[key]
-                ds.groups[key].loc[:, "G_raw"] = sub["G"].astype(float)  # 원본 Å⁻³ 보존
-            K = 1e30 / (12 * math.pi)  # ≈ 2.6525823848649222e28
-            for key in sorted(ds.groups.keys(), key=natural_key):
-                sub = ds.groups[key]
-                ds.groups[key].loc[:, "G"] = sub["G_raw"] * K
-            self.append_log(f"G_i scaled to SI with K={K:g} (now in 1/(12π)·m^-3).")
+            ds = prepare_dataset(
+                self.df, col_nuc, col_T, col_del,
+                col_G if col_G else None,
+                col_w if col_w not in ("", "<none>") else None,
+                col_pcs_guess if col_pcs_guess not in ("", "<none>") else None
+            )
+
+            # Gi가 있을 때만 SI 스케일링(G_raw → G) 적용
+            if getattr(ds, "has_G", False):
+                # prepare_dataset에서 이미 G_raw를 만들어 두었다고 가정
+                K = 1e30 / (12 * math.pi)  # ≈ 2.6525823848649222e28
+                for key in sorted(ds.groups.keys(), key=natural_key):
+                    sub = ds.groups[key]
+                    ds.groups[key].loc[:, "G"] = sub["G_raw"].astype(float) * K
+                self.append_log(f"G_i scaled to SI with K={K:g} (now in 1/(12π)·m^-3).")
+            else:
+                self.append_log(
+                    "No Gi column provided → running in linear-only mode (no baseline/extended, no D2, no PCS vs Gi).")
+
             self.dataset = ds
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to prepare dataset:\n{e}")
             return
 
-        # options
+        # ---------- options ----------
         try:
             lambda_pcs_prior = float(eval(self.ed_pcs_prior_lambda.text(), {}, {}))
             lambda_pcs_prior = max(0.0, lambda_pcs_prior)
@@ -1150,7 +1201,7 @@ class MainWindow(QMainWindow):
 
         try:
             ridge = float(eval(self.ed_ridge.text(), {}, {}))
-            ds.ridge_lambda = max(0.0, ridge)
+            self.dataset.ridge_lambda = max(0.0, ridge)
         except Exception:
             QMessageBox.critical(self, "Error", "Invalid ridge λ.")
             return
@@ -1165,7 +1216,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", "Invalid fixed parameter value(s).")
             return
 
-        # -------- Linear fit (two-term): δ ≈ a/T + b/T^2 (no intercept) --------
+        # ---------- Linear fit (δ ≈ a/T + b/T², no intercept) ----------
         if self.chk_run_linear.isChecked():
             try:
                 T_ref = float(self.ed_Tref_linear.text())
@@ -1173,12 +1224,21 @@ class MainWindow(QMainWindow):
                 T_ref = 298.0
 
             self.linear_results = {}
-            for nuc in sorted(ds.groups.keys(), key=natural_key):
-                sub = ds.groups[nuc]
+            for nuc in sorted(self.dataset.groups.keys(), key=natural_key):
+                sub = self.dataset.groups[nuc]
                 T = sub["T"].to_numpy(float)
                 d = sub["delta"].to_numpy(float)
                 w = sub["w"].to_numpy(float)
-                Gi = float(np.mean(sub["G_raw"].to_numpy(float)))  # 핵별 Gi (Å⁻³)
+
+                # Gi는 있을 때만 평균값 사용, 없으면 NaN
+                if "G_raw" in sub.columns:
+                    vals = sub["G_raw"].to_numpy(float)
+                    if vals.size == 0 or np.all(np.isnan(vals)):
+                        Gi = float("nan")
+                    else:
+                        Gi = float(np.nanmean(vals))
+                else:
+                    Gi = float("nan")
 
                 x1 = 1.0 / T
                 x2 = 1.0 / (T ** 2)
@@ -1186,22 +1246,20 @@ class MainWindow(QMainWindow):
                 # 두-항 WLS: δ ≈ a1*(1/T) + b1*(1/T^2)
                 a1, b1, sa1, sb1 = two_term_wls(x1, x2, d, w)
 
-                # T_ref에서 기여(ppm)
+                # T_ref 분해(ppm)
                 contact_Tref = a1 / T_ref
                 pcs_Tref = b1 / (T_ref ** 2)
 
-                # D2_i (= b1/Gi), 표준오차
-                if Gi != 0.0 and np.isfinite(b1):
+                # D2_i (= b1/Gi), Gi 없으면 NaN
+                if np.isfinite(Gi) and Gi != 0.0 and np.isfinite(b1):
                     D2_i = b1 / Gi
                     D2_se_i = abs(sb1 / Gi)
+                    dchi_per_molecule = 12 * math.pi * (D2_i / (T_ref ** 2)) * 1e-6
+                    dchi_m3_per_mol = dchi_per_molecule * const.N_A
                 else:
-                    D2_i = float("nan")
-                    D2_se_i = float("nan")
-
-                # Δχ_ax(T_ref)
-                dchi_per_molecule = 12 * math.pi * (D2_i / (T_ref ** 2)) * 1e-6
-                NA = const.N_A
-                dchi_m3_per_mol = dchi_per_molecule * NA  # (μ0 미포함 관행값)
+                    D2_i = D2_se_i = float("nan")
+                    dchi_per_molecule = float("nan")
+                    dchi_m3_per_mol = float("nan")
 
                 self.linear_results[nuc] = {
                     "Gi": Gi,
@@ -1214,7 +1272,7 @@ class MainWindow(QMainWindow):
                     "dchi_Tref_m3_per_mol": dchi_m3_per_mol,
                 }
 
-            # --- D2 가중평균(가중치 = 1/σ^2, σ=sb1/Gi) ---
+            # 가중 평균 D2 (Gi 없는 경우 자동으로 건너뜀)
             valid = [v for v in self.linear_results.values()
                      if np.isfinite(v["D2_i"]) and np.isfinite(v["D2_se_i"]) and v["D2_se_i"] > 0]
             if valid:
@@ -1222,9 +1280,7 @@ class MainWindow(QMainWindow):
                 D2_bar = sum(v["D2_i"] / (v["D2_se_i"] ** 2) for v in valid) / wsum
                 D2_bar_se = math.sqrt(1.0 / wsum)
                 dchi_bar_per_molecule = 12 * math.pi * (D2_bar / (T_ref ** 2)) * 1e-6
-                NA = const.N_A
-                dchi_bar_m3_per_mol = dchi_bar_per_molecule * NA
-
+                dchi_bar_m3_per_mol = dchi_bar_per_molecule * const.N_A
                 self.linear_summary = {
                     "N_used": len(valid),
                     "T_ref": T_ref,
@@ -1239,7 +1295,7 @@ class MainWindow(QMainWindow):
                 self.linear_summary = None
                 self.append_log("[Linear] No valid entries for weighted D2 (check Gi or uncertainties).")
 
-            # 표 갱신 + 로그
+            # GUI 표 + 로그
             self.tbl_linear.setModel(LinearTableModel(self.linear_results))
             self.append_log(f"[Linear fit δ = a/T + b/T^2] (T_ref={T_ref:g} K)")
             self.append_log("  Note: Interpretation b/Gi = D2 is exact for S2≈0, D3≈0 (classical Bleaney).")
@@ -1252,11 +1308,13 @@ class MainWindow(QMainWindow):
                     f"D2_i={v['D2_i']:.6g}"
                 )
 
-        # --- Linear fit Cartesian OLS (PCS vs G_i, T_ref에서) ---
-        if getattr(self, "linear_results", None):
+        # --- Linear fit Cartesian OLS (PCS vs G_i, T_ref) — Gi 있을 때만 ---
+        if getattr(self, "linear_results", None) and getattr(self.dataset, "has_G", False):
             self.cartesian_ols = self.compute_cartesian_ols(Tref_ui)
         else:
             self.cartesian_ols = None
+            if not getattr(self.dataset, "has_G", False):
+                self.append_log("[Info] No Gi → skip Cartesian OLS (PCS vs Gi).")
 
         if self.cartesian_ols:
             co = self.cartesian_ols
@@ -1268,7 +1326,12 @@ class MainWindow(QMainWindow):
                             f"→ Δχ = {co['DeltaChi_1e32_weighted']:.6g} ×10^-32 m^3 "
                             f"({co['DeltaChi_m3_weighted']:.3e} m^3)")
 
-        # -------- Baseline (classical) fit: S2=0, D3=0 --------
+        # --- Gi 없으면 baseline/extended 전부 생략 (linear-only 모드) ---
+        if not getattr(self.dataset, "has_G", False):
+            self.append_log("[Info] Gi missing → skipping baseline (S2=0,D3=0) and extended global fits.")
+            return
+
+        # ---------- Baseline (classical: S2=0, D3=0) ----------
         self.baseline_globals = None
         self.baseline_Fi = None
         self.baseline_diag = None
@@ -1277,15 +1340,14 @@ class MainWindow(QMainWindow):
         if self.chk_run_baseline.isChecked():
             try:
                 fix_base = {"S2": 0.0, "D3": 0.0}
-                # Allow S1, D2 to vary unless user fixed them explicitly
                 if "S1" in fix_ext: fix_base["S1"] = fix_ext["S1"]
                 if "D2" in fix_ext: fix_base["D2"] = fix_ext["D2"]
 
                 base_globals, base_Fi, base_diag = fit_globals(
-                    ds, init, fix_base, Tref_for_diag=Tref_ui,
+                    self.dataset, init, fix_base, Tref_for_diag=Tref_ui,
                     Tref_for_prior=Tref_ui, lambda_pcs_prior=lambda_pcs_prior
                 )
-                base_metrics = overall_metrics(ds, base_globals, base_Fi)
+                base_metrics = overall_metrics(self.dataset, base_globals, base_Fi)
 
                 self.baseline_globals = base_globals
                 self.baseline_Fi = base_Fi
@@ -1300,19 +1362,18 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Baseline fit failed", f"Least-squares failed (baseline):\n{e}")
                 return
 
-        # -------- Extended fit --------
+        # ---------- Extended fit ----------
         try:
             globals_out, fi_map, diag = fit_globals(
-                ds, init, fix_ext, Tref_for_diag=Tref_ui,
+                self.dataset, init, fix_ext, Tref_for_diag=Tref_ui,
                 Tref_for_prior=Tref_ui, lambda_pcs_prior=lambda_pcs_prior
             )
         except Exception as e:
             QMessageBox.critical(self, "Fit failed", f"Least-squares failed (extended):\n{e}")
             return
 
-        ext_metrics = overall_metrics(ds, globals_out, fi_map)
+        ext_metrics = overall_metrics(self.dataset, globals_out, fi_map)
 
-        self.dataset = ds
         self.globals_out = globals_out
         self.fi_map = fi_map
         self.diag = diag
@@ -1330,7 +1391,7 @@ class MainWindow(QMainWindow):
         # comparison summary if baseline exists
         if self.baseline_metrics is not None:
             d_rmse = ext_metrics["RMSE"] - self.baseline_metrics["RMSE"]
-            d_sse  = ext_metrics["SSE"]  - self.baseline_metrics["SSE"]
+            d_sse = ext_metrics["SSE"] - self.baseline_metrics["SSE"]
             better = "Extended better" if d_rmse < 0 else "Baseline better"
             self.append_log(f"[Compare] ΔRMSE={d_rmse:.6g} ppm, ΔSSE={d_sse:.6g}  → {better}")
 
