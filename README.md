@@ -1,4 +1,5 @@
 # ParaFit — Bleaney Model Fitting GUI
+![version](https://img.shields.io/badge/version-0.1.1-blue) ![license](https://img.shields.io/badge/license-BSD%203--Clause-green)
 
 This repository provides an interactive GUI to fit variable-temperature paramagnetic NMR shifts to the **extended Bleaney model** with **variable projection** for per-nucleus contact factors $F_i$ and shared global parameters $(S_1,S_2,D_2,D_3)$. It also exports diagnostics, linear approximations, and $Δχ_ax(T)$ in multiple unit conventions.
 
