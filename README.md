@@ -18,7 +18,7 @@ $$
 - **Per nucleus:** Fᵢ (solved analytically each iteration, variable projection)  
 - Ridge regularization $(\lambda)$ on Fᵢ is available.
 
-**Baseline (classical Bleaney):**  
+**Baseline for comparison (classical Bleaney):**  
 $S_2 = 0, D_3 = 0$
 
 **Linear two-term approximation (per nucleus):**  
@@ -60,7 +60,7 @@ Both are exported.
 - **λ-sweep** tool with plots & CSV summary  
 - Optional **PCS-guess prior** at defined T_ref  
 - **Linear two-term WLS** and **Cartesian OLS** (PCS vs Gᵢ)  
-- Rich **CSV/JSON/plot exports**  
+- Exports **CSV/JSON/plot**  
 - $Δχ_ax(T)$ plotting and export (extended, baseline, linear)
 
 ---
