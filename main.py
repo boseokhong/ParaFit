@@ -647,18 +647,18 @@ class FiTableModel(QAbstractTableModel):
 
 class DiagTableModel(QAbstractTableModel):
     """Display diagnostics per nucleus (dict of dicts)."""
-    def __init__(self, diag: Dict[str, dict], parent=None):
+    def __init__(self, diag: Dict[str, dict], fi_map: Optional[Dict[str, float]] = None, parent=None):
         super().__init__(parent)
         self.keys = sorted(diag.keys(), key=natural_key)
-        self.cols = ["n_points", "T_min_K", "T_max_K", "RMSE_ppm",
-                     "fcs_at_Tref_ppm", "pcs_at_Tref_ppm", "ref_T_K"]
         self.data_dict = diag
+        self.fi_map = fi_map or {}
+        self.cols = ["n_points", "T_min_K", "T_max_K", "RMSE_ppm",
+                     "Fi", "fcs_at_Tref_ppm", "pcs_at_Tref_ppm", "ref_T_K"]
 
     def rowCount(self, parent=QModelIndex()) -> int:
         return len(self.keys)
 
     def columnCount(self, parent=QModelIndex()) -> int:
-        # 1 for "Nucleus" + number of diag columns
         return 1 + len(self.cols)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -669,7 +669,10 @@ class DiagTableModel(QAbstractTableModel):
         if c == 0:
             return key
         colname = self.cols[c - 1]
-        v = self.data_dict[key].get(colname, "")
+        if colname == "Fi":
+            v = self.fi_map.get(key, "")
+        else:
+            v = self.data_dict.get(key, {}).get(colname, "")
         if isinstance(v, float):
             return f"{v:.6g}"
         return str(v)
@@ -679,10 +682,7 @@ class DiagTableModel(QAbstractTableModel):
             return None
         if orientation == Qt.Orientation.Horizontal:
             headers = ["Nucleus"] + self.cols
-            if 0 <= section < len(headers):
-                return headers[section]
-            return ""
-        # vertical header: show row numbers (optional)
+            return headers[section] if 0 <= section < len(headers) else ""
         return str(section + 1)
 
 class DchiPlotWindow(QWidget):
@@ -898,12 +898,9 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.tbl_linear)
 
         self.tbl_globals = CopyableTableView()
-        self.tbl_fi = CopyableTableView()
         self.tbl_diag = CopyableTableView()
         left_layout.addWidget(QLabel("Global parameters (S1,S2,D2,D3) — Extended model"))
         left_layout.addWidget(self.tbl_globals)
-        left_layout.addWidget(QLabel("Per-nucleus Fi — Extended model"))
-        left_layout.addWidget(self.tbl_fi)
 
         self.txt_log = QTextEdit(); self.txt_log.setReadOnly(True)
         right_layout.addWidget(QLabel("Diagnostics per nucleus — Extended model"))
@@ -927,19 +924,39 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No data", "Please load a CSV and run at least once to set columns.")
             return
 
-        # λ 리스트 입력 받기
+        # λ input
         text, ok = QInputDialog.getText(
-            self, "Ridge λ list",
-            "Enter λ (alpha) values (comma-separated):",
-            text="0, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 10"
+            self, "Ridge λ sweep",
+            "Enter 'lambda_min, lambda_max, N_points, include_zero(0/1)':",
+            text="1e-10, 1e2, 50, 1"
         )
-        if not ok or not text.strip(): return
+        if not ok or not text.strip():
+            return
+
         try:
-            lam_list = [float(eval(s.strip(), {}, {})) for s in text.split(",")]
-            lam_list = [float(l) for l in lam_list if np.isfinite(l) and l >= 0]
-            if not lam_list: raise ValueError
-        except Exception:
-            QMessageBox.critical(self, "Invalid input", "Please enter numbers like: 0, 1e-4, 1e-3, 1e-2")
+            parts = [p.strip() for p in text.split(",")]
+            if len(parts) < 3:
+                raise ValueError("Need at least 3 values.")
+            lam_min = float(eval(parts[0], {}, {}))
+            lam_max = float(eval(parts[1], {}, {}))
+            n_pts = int(eval(parts[2], {}, {}))
+            include0 = True
+            if len(parts) >= 4:
+                include0 = bool(int(eval(parts[3], {}, {})))
+
+            if not (np.isfinite(lam_min) and np.isfinite(lam_max)):
+                raise ValueError
+            if lam_min <= 0 or lam_max <= 0 or lam_max <= lam_min:
+                raise ValueError("lambda_min/lambda_max must be > 0 and max>min.")
+            if n_pts < 2:
+                raise ValueError("N_points must be >= 2.")
+
+            lam_list = np.logspace(np.log10(lam_min), np.log10(lam_max), n_pts).tolist()
+            if include0:
+                lam_list = [0.0] + lam_list
+
+        except Exception as e:
+            QMessageBox.critical(self, "Invalid input", f"Bad sweep settings:\n{e}")
             return
 
         # UI에서 현재 init/fix/Tref 읽기 (Fit과 동일 로직 재사용)
@@ -1380,8 +1397,7 @@ class MainWindow(QMainWindow):
 
         # update tables with extended model
         self.tbl_globals.setModel(DictTableModel(globals_out))
-        self.tbl_fi.setModel(FiTableModel(fi_map))
-        self.tbl_diag.setModel(DiagTableModel(diag))
+        self.tbl_diag.setModel(DiagTableModel(diag, fi_map))
 
         self.append_log("[Extended] Fit complete.")
         self.append_log("  Globals: " + ", ".join(f"{k}={v:.6g}" for k, v in globals_out.items()))
@@ -1525,11 +1541,16 @@ class MainWindow(QMainWindow):
         base = Path(out_dir)
 
         # subfolders
-        per_ext = base / "per-nucleus-extended"
-        per_base = base / "per-nucleus-baseline"
-        summ = base / "summary"
+        linear_dir = base / "linear"
+        extended_dir = base / "extended"
+        baseline_dir = base / "baseline"
+
+        per_ext = extended_dir / "per_nucleus"
+        per_base = baseline_dir / "per_nucleus"
+
+        linear_dir.mkdir(parents=True, exist_ok=True)
         per_ext.mkdir(parents=True, exist_ok=True)
-        summ.mkdir(parents=True, exist_ok=True)
+
         if self.baseline_globals and self.baseline_Fi:
             per_base.mkdir(parents=True, exist_ok=True)
 
@@ -1556,7 +1577,7 @@ class MainWindow(QMainWindow):
                     "DeltaChi_ax_Tref_m3_per_mol_no_mu0": v["dchi_Tref_per_molecule"] * NA,
                     "DeltaChi_ax_Tref_m3_per_mol_with_mu0": v["dchi_Tref_per_molecule"] * NA / mu0,
                 })
-            pd.DataFrame(rows).to_csv(summ / "linear_approx_table.csv", index=False)
+            pd.DataFrame(rows).to_csv(linear_dir / "linear_approx_table.csv", index=False)
 
             if getattr(self, "linear_summary", None):
                 ls = self.linear_summary
@@ -1569,11 +1590,11 @@ class MainWindow(QMainWindow):
                     "DeltaChi_ax_Tref_m3_per_mol_weighted": ls["DeltaChi_ax_Tref_m3_per_mol_weighted"],
                     "DeltaChi_ax_Tref_m3_per_mol_with_mu0_weighted":
                         ls["DeltaChi_ax_Tref_per_molecule_weighted"] * NA / mu0
-                }]).to_csv(summ / "linear_approx_weighted_summary.csv", index=False)
+                }]).to_csv(linear_dir / "linear_approx_weighted_summary.csv", index=False)
 
         # --- Linear fit Cartesian OLS summary export ---
         if getattr(self, "cartesian_ols", None):
-            pd.DataFrame([self.cartesian_ols]).to_csv(summ / "cartesian_ols_summary.csv", index=False)
+            pd.DataFrame([self.cartesian_ols]).to_csv(linear_dir / "cartesian_ols_summary.csv", index=False)
 
         # 개별 포인트(핵별) 산포도 원자료도 저장(원하면)
         if hasattr(self, "linear_results") and self.linear_results:
@@ -1597,7 +1618,7 @@ class MainWindow(QMainWindow):
                     "sigma_PCS_Tref_ppm": sigma_pcs
                 })
             if rows_cart:
-                pd.DataFrame(rows_cart).to_csv(summ / "cartesian_points_PCS_vs_Gi.csv", index=False)
+                pd.DataFrame(rows_cart).to_csv(linear_dir / "cartesian_points_PCS_vs_Gi.csv", index=False)
 
         # ---------- helper to export one model ----------
         def export_model(ds, globals_out, fi_map, per_folder, tag="extended"):
@@ -1628,17 +1649,57 @@ class MainWindow(QMainWindow):
                 df_out.to_csv(per_folder / f"{nuc}_{tag}.csv", index=False)
 
             # summary tables
+            model_dir = per_folder.parent
+
             # 1) globals + metrics
             met = overall_metrics(ds, globals_out, fi_map)
             pd.DataFrame([{
                 "S1": globals_out["S1"], "S2": globals_out["S2"],
                 "D2": globals_out["D2"], "D3": globals_out["D3"],
                 "RMSE": met["RMSE"], "SSE": met["SSE"], "N_points": int(met["N_points"])
-            }]).to_csv(summ / f"globals_and_metrics_{tag}.csv", index=False)
+            }]).to_csv(model_dir / "globals_and_metrics.csv", index=False)
 
-            # 2) Fi table
-            fi_rows = [{"nucleus": k, "Fi": v} for k, v in sorted(fi_map.items(), key=lambda kv: natural_key(kv[0]))]
-            pd.DataFrame(fi_rows).to_csv(summ / f"Fi_table_{tag}.csv", index=False)
+            # 2) per-nucleus summary (Fi + diagnostics merged)
+            fi_rows = [{"nucleus": k, "Fi": v} for k, v in fi_map.items()]
+            df_fi = pd.DataFrame(fi_rows)
+
+            # tag에 따라 diagnostics source 선택
+            diag_src = getattr(self, "diag", None) if tag == "extended" else getattr(self, "baseline_diag", None)
+
+            if diag_src:
+                diag_rows = []
+                for nuc, dct in diag_src.items():
+                    row = {"nucleus": nuc}
+                    row.update(
+                        dct)  # n_points, T_min_K, T_max_K, RMSE_ppm, fcs_at_Tref_ppm, pcs_at_Tref_ppm, ref_T_K ...
+                    diag_rows.append(row)
+                df_diag = pd.DataFrame(diag_rows)
+                df_sum = df_fi.merge(df_diag, on="nucleus", how="outer")
+            else:
+                df_sum = df_fi
+
+            # --- nucleus 자연 정렬 ---
+            df_sum["_sortkey"] = df_sum["nucleus"].astype(str).map(natural_key)
+            df_sum = df_sum.sort_values("_sortkey").drop(columns=["_sortkey"])
+
+            # --- 컬럼 순서 고정  ---
+            preferred_order = [
+                "nucleus",
+                "n_points",
+                "T_min_K",
+                "T_max_K",
+                "ref_T_K",
+                "RMSE_ppm",
+                "fcs_at_Tref_ppm",
+                "pcs_at_Tref_ppm",
+                "Fi",
+            ]
+
+            ordered_cols = [c for c in preferred_order if c in df_sum.columns]
+            remaining_cols = [c for c in df_sum.columns if c not in ordered_cols]
+            df_sum = df_sum[ordered_cols + remaining_cols]
+
+            df_sum.to_csv(model_dir / "summary_per_nucleus.csv", index=False)
 
         # ---------- export extended ----------
         export_model(self.dataset, self.globals_out, self.fi_map, per_ext, tag="extended")
@@ -1667,26 +1728,26 @@ class MainWindow(QMainWindow):
                     "Δχ_ax(T_ref) per mol (m^3/mol; no μ0)": v["dchi_Tref_m3_per_mol"],
                     "T_ref_used_K": T_ref
                 })
-            pd.DataFrame(lin_rows).to_csv(summ / "linear_approx_table_for_gui.csv", index=False)
+            pd.DataFrame(lin_rows).to_csv(linear_dir / "linear_approx_table_for_gui.csv", index=False)
 
-        # 2) Diagnostics per nucleus — Extended (what you see in the right-side table)
-        if self.diag:
-            diag_rows_ext = []
-            for nuc in sorted(self.diag.keys(), key=natural_key):
-                row = {"nucleus": nuc}
-                row.update(self.diag[
-                               nuc])  # has: n_points, T_min_K, T_max_K, RMSE_ppm, fcs_at_Tref_ppm, pcs_at_Tref_ppm, ref_T_K
-                diag_rows_ext.append(row)
-            pd.DataFrame(diag_rows_ext).to_csv(summ / "diagnostics_per_nucleus_extended.csv", index=False)
-
-        # 3) Diagnostics per nucleus — Baseline (if available)
-        if getattr(self, "baseline_diag", None):
-            diag_rows_base = []
-            for nuc in sorted(self.baseline_diag.keys(), key=natural_key):
-                row = {"nucleus": nuc}
-                row.update(self.baseline_diag[nuc])
-                diag_rows_base.append(row)
-            pd.DataFrame(diag_rows_base).to_csv(summ / "diagnostics_per_nucleus_baseline.csv", index=False)
+        # # 2) Diagnostics per nucleus — Extended (what you see in the right-side table)
+        # if self.diag:
+        #     diag_rows_ext = []
+        #     for nuc in sorted(self.diag.keys(), key=natural_key):
+        #         row = {"nucleus": nuc}
+        #         row.update(self.diag[
+        #                        nuc])  # has: n_points, T_min_K, T_max_K, RMSE_ppm, fcs_at_Tref_ppm, pcs_at_Tref_ppm, ref_T_K
+        #         diag_rows_ext.append(row)
+        #     pd.DataFrame(diag_rows_ext).to_csv(extended_dir / "diagnostics_per_nucleus.csv", index=False)
+        #
+        # # 3) Diagnostics per nucleus — Baseline (if available)
+        # if getattr(self, "baseline_diag", None):
+        #     diag_rows_base = []
+        #     for nuc in sorted(self.baseline_diag.keys(), key=natural_key):
+        #         row = {"nucleus": nuc}
+        #         row.update(self.baseline_diag[nuc])
+        #         diag_rows_base.append(row)
+        #     pd.DataFrame(diag_rows_base).to_csv(baseline_dir / "diagnostics_per_nucleus.csv", index=False)
 
         self.append_log(f"Saved CSV data into: {out_dir}")
 
