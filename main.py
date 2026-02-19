@@ -482,6 +482,37 @@ def overall_metrics(ds: Dataset, globals_out: Dict[str, float], Fi_map: Dict[str
     rmse = math.sqrt(sse / wsum) if wsum > 0 else float("nan")
     return {"SSE": sse, "RMSE": rmse, "N_points": npts}
 
+def compute_tau_metrics(globals_out: Dict[str, float], T_ref: float) -> Dict[str, float]:
+    S1 = float(globals_out.get("S1", float("nan")))
+    S2 = float(globals_out.get("S2", float("nan")))
+    D2 = float(globals_out.get("D2", float("nan")))
+    D3 = float(globals_out.get("D3", float("nan")))
+    T  = float(T_ref)
+
+    def safe_div(a, b):
+        if not np.isfinite(a) or not np.isfinite(b) or b == 0.0:
+            return float("nan")
+        return a / b
+
+    tau1 = safe_div(S2, S1)   # τ1 = S2/S1
+    tau2 = safe_div(D3, D2)   # τ2 = D3/D2
+
+    def frac(tau):
+        x = safe_div(abs(tau), T)          # |τ|/T_ref
+        if not np.isfinite(x):
+            return float("nan")
+        return x / (1.0 + x)               # x/(1+x)
+
+    return {
+        "tau_1": tau1,
+        "tau_2": tau2,
+        "tau_1_over_Tref": safe_div(tau1, T),
+        "tau_1_frac": frac(tau1),
+        "tau_2_over_Tref": safe_div(tau2, T),
+        "tau_2_frac": frac(tau2),
+        "T_ref_used_K": float(T),
+    }
+
 # Δχ_ax(T) calculation (ppm -> fraction)
 def delta_chi_ax_series(T_array, D2, D3=0.0):
     T = np.asarray(T_array, dtype=float)
@@ -1375,6 +1406,10 @@ class MainWindow(QMainWindow):
                 self.append_log("  Globals: " + ", ".join(f"{k}={v:.6g}" for k, v in base_globals.items()))
                 self.append_log(f"  Metrics: RMSE={base_metrics['RMSE']:.6g} ppm, SSE={base_metrics['SSE']:.6g}, "
                                 f"N={int(base_metrics['N_points'])}")
+                tau_base = compute_tau_metrics(base_globals, Tref_ui)
+                self.append_log(
+                    "  Tau: " + ", ".join(f"{k}={v:.5g}" for k, v in tau_base.items() if k != "T_ref_used_K")
+                    + f" (T_ref={tau_base['T_ref_used_K']:.5g} K)")
             except Exception as e:
                 QMessageBox.critical(self, "Baseline fit failed", f"Least-squares failed (baseline):\n{e}")
                 return
@@ -1396,13 +1431,18 @@ class MainWindow(QMainWindow):
         self.diag = diag
 
         # update tables with extended model
-        self.tbl_globals.setModel(DictTableModel(globals_out))
+        tau_ext = compute_tau_metrics(globals_out, Tref_ui)
+        globals_for_table = dict(globals_out)
+        globals_for_table.update(tau_ext)
+        self.tbl_globals.setModel(DictTableModel(globals_for_table))
         self.tbl_diag.setModel(DiagTableModel(diag, fi_map))
 
         self.append_log("[Extended] Fit complete.")
         self.append_log("  Globals: " + ", ".join(f"{k}={v:.6g}" for k, v in globals_out.items()))
         self.append_log(f"  Metrics: RMSE={ext_metrics['RMSE']:.6g} ppm, SSE={ext_metrics['SSE']:.6g}, "
                         f"N={int(ext_metrics['N_points'])}")
+        self.append_log("  Tau: " + ", ".join(f"{k}={v:.5g}" for k, v in tau_ext.items() if k != "T_ref_used_K")
+                        + f" (T_ref={tau_ext['T_ref_used_K']:.5g} K)")
 
         # comparison summary if baseline exists
         if self.baseline_metrics is not None:
@@ -1422,10 +1462,14 @@ class MainWindow(QMainWindow):
         if not out_path:
             return
 
+        tau_ext = compute_tau_metrics(self.globals_out, float(self.ed_Tref_linear.text() or 298.0))
+        tau_base = None if self.baseline_globals is None else compute_tau_metrics(self.baseline_globals, float(
+            self.ed_Tref_linear.text() or 298.0))
         ext_metrics = overall_metrics(self.dataset, self.globals_out, self.fi_map)
         payload = {
             "baseline": None if self.baseline_globals is None else {
                 "globals": self.baseline_globals,
+                "tau": tau_base,
                 "Fi": self.baseline_Fi,
                 "diagnostics": self.baseline_diag,
                 "metrics": self.baseline_metrics,
@@ -1433,6 +1477,7 @@ class MainWindow(QMainWindow):
             },
             "extended": {
                 "globals": self.globals_out,
+                "tau": tau_ext,
                 "Fi": self.fi_map,
                 "diagnostics": self.diag,
                 "metrics": ext_metrics,
@@ -1653,11 +1698,17 @@ class MainWindow(QMainWindow):
 
             # 1) globals + metrics
             met = overall_metrics(ds, globals_out, fi_map)
-            pd.DataFrame([{
+            try:
+                T_ref = float(self.ed_Tref_linear.text())
+            except Exception:
+                T_ref = 298.0
+            row = {
                 "S1": globals_out["S1"], "S2": globals_out["S2"],
                 "D2": globals_out["D2"], "D3": globals_out["D3"],
-                "RMSE": met["RMSE"], "SSE": met["SSE"], "N_points": int(met["N_points"])
-            }]).to_csv(model_dir / "globals_and_metrics.csv", index=False)
+                "RMSE": met["RMSE"], "SSE": met["SSE"], "N_points": int(met["N_points"]),
+            }
+            row.update(compute_tau_metrics(globals_out, T_ref))
+            pd.DataFrame([row]).to_csv(model_dir / "globals_and_metrics.csv", index=False)
 
             # 2) per-nucleus summary (Fi + diagnostics merged)
             fi_rows = [{"nucleus": k, "Fi": v} for k, v in fi_map.items()]
