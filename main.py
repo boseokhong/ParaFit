@@ -190,11 +190,9 @@ def sweep_ridge_lambda(ds: Dataset, init: dict, fix: dict,
                 "D2": globals_out["D2"], "D3": globals_out["D3"],
                 "RMSE": met["RMSE"],
 
-                # 기존 평균(참고용)
                 "FCS_mean_ppm": fcs_mean,
                 "PCS_mean_ppm": pcs_mean,
 
-                # 요청한 통계 3종
                 "FCS_median_ppm": fcs_med,
                 "PCS_median_ppm": pcs_med,
                 "FCS_absmean_ppm": fcs_absmean,
@@ -208,14 +206,14 @@ def sweep_ridge_lambda(ds: Dataset, init: dict, fix: dict,
     return pd.DataFrame(out_rows)
 
 class RidgeSweepWindow(QWidget):
-    """λ 스윕 결과를 플롯+표로 보여주는 작은 대화창."""
+    """λ 스윕 대화창."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ridge λ Sweep")
         self.resize(900, 600)
         lay = QVBoxLayout(self)
 
-        # Matplotlib figure (세 축)
+        # Matplotlib figure
         self.fig = Figure(figsize=(8.5, 4.2))
         self.ax_fpcs = self.fig.add_subplot(131)
         self.ax_dd   = self.fig.add_subplot(132)
@@ -223,7 +221,7 @@ class RidgeSweepWindow(QWidget):
         self.canvas = FigureCanvas(self.fig)
         lay.addWidget(self.canvas)
 
-        # 테이블 뷰 + 버튼 행
+        # Table view and buttons
         bottom = QHBoxLayout()
         self.table = QTableView()
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -237,7 +235,7 @@ class RidgeSweepWindow(QWidget):
 
         lay.addLayout(bottom)
 
-        # 이벤트 핸들러 placeholder
+        # event handler
         self.btn_save_csv.clicked.connect(self._save_csv)
         self._last_df: Optional[pd.DataFrame] = None
 
@@ -258,7 +256,7 @@ class RidgeSweepWindow(QWidget):
                 return self.df.columns[sec] if orient==Qt.Orientation.Horizontal else str(sec+1)
         self.table.setModel(_DfModel(self._last_df))
 
-        # 플롯
+        # plot
         ax1, ax2, ax3 = self.ax_fpcs, self.ax_dd, self.ax_rmse
         for ax in (ax1, ax2, ax3): ax.clear()
 
@@ -299,7 +297,6 @@ class RidgeSweepWindow(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
 
 # -----lambda swip util end--------
-
 
 def residuals_global(theta: np.ndarray, ds: Dataset,
                      fix_mask: np.ndarray, fixed_vals: np.ndarray,
@@ -342,7 +339,7 @@ def residuals_global(theta: np.ndarray, ds: Dataset,
                     Tref = float(Tref_for_prior)
                 else:
                     Tref = 298.0
-                Gbar = float(np.mean(sub["G"]))  # 이미 SI 스케일(1/(12π)·m^-3)
+                Gbar = float(np.mean(sub["G"]))  # already SI scale (1/(12π)·m^-3)
                 pcs_model = Gbar * (D2 / (Tref ** 2) + D3 / (Tref ** 3))
                 pcs_prior_terms.append(math.sqrt(lambda_pcs_prior) * (pcs_model - pcs_guess))
 
@@ -743,12 +740,12 @@ class DchiPlotWindow(QWidget):
 class CopyableTableView(QTableView):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # 드래그 멀티 선택 허용
+        # multi drag
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
 
-        # 컨텍스트 메뉴
+        # context menu
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_menu)
 
@@ -770,7 +767,6 @@ class CopyableTableView(QTableView):
         indexes = self.selectedIndexes()
         if not indexes:
             return
-        # 사각형 범위로 정렬
         rows = sorted(set(i.row() for i in indexes))
         cols = sorted(set(i.column() for i in indexes))
         grid = []
@@ -1083,7 +1079,6 @@ class MainWindow(QMainWindow):
         set_if_found(self.cmb_delta, "delta_para_ppm")
         set_if_found(self.cmb_G, "G_i")
         set_if_found(self.cmb_w, "weight")
-        # 새로: 흔히 쓸 이름의 기본값(있으면)
         set_if_found(self.cmb_pcs_guess, "PCS_guess_ppm")
 
         self.set_controls_enabled(True)
@@ -1155,7 +1150,7 @@ class MainWindow(QMainWindow):
             return
 
         import numpy as np
-        T_grid = np.arange(200, 401, 1.0)  # 기본 범위 200–400 K, 1K step
+        T_grid = np.arange(200, 401, 1.0)  # default 200–400 K, 1K step
 
         # Extended
         D2_ext = float(self.globals_out["D2"])
@@ -1320,7 +1315,7 @@ class MainWindow(QMainWindow):
                     "dchi_Tref_m3_per_mol": dchi_m3_per_mol,
                 }
 
-            # 가중 평균 D2 (Gi 없는 경우 자동으로 건너뜀)
+            # 가중 평균 D2 (Gi 없는 경우 건너뜀)
             valid = [v for v in self.linear_results.values()
                      if np.isfinite(v["D2_i"]) and np.isfinite(v["D2_se_i"]) and v["D2_se_i"] > 0]
             if valid:
