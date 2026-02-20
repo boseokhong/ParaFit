@@ -127,13 +127,6 @@ def _parse_square_matrix_blocked(lines: List[str], start_idx: int) -> Tuple[np.n
         raise ValueError("Bad matrix header line (Orbital ...).")
     col_labels = header[1:]
     full_labels = list(col_labels)
-
-    # We need to detect full dimension (n).
-    # ORCA often prints full label list in first header, but if not, we can build it across blocks.
-    # We'll parse blocks and expand full_labels until row count stabilizes.
-    # Approach:
-    #  - Parse first block, get row labels encountered -> this is n
-    #  - Then keep reading subsequent "Orbital" blocks to fill missing columns
     i += 1
 
     # parse first block rows to get row labels & first column subset
@@ -173,7 +166,7 @@ def _parse_square_matrix_blocked(lines: List[str], start_idx: int) -> Tuple[np.n
     mat = np.full((n, len(col_labels)), np.nan, float)
     mat[:, :len(col_labels)] = np.array(rows_tmp, float)
 
-    # now parse subsequent blocks (if any) and append columns
+    # parse subsequent blocks (if any) and append columns
     while i < len(lines):
         # seek next Orbital header; if not found soon, stop
         while i < len(lines) and not _RE_ORBITAL_HEADER.match(lines[i].strip()):

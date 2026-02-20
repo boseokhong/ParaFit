@@ -28,7 +28,7 @@ class ChiTensorSeries:
     tensors_per_molecule_m3: dict[T(K)] -> 3x3 numpy array in SI (m^3/molecule)
       - stored as chi(T) (NOT chi*T)
     is_chiT_input: whether original parsed data were chi*T
-    used_4pi: whether 4π factor was applied in conversion (Spinach-like convention)
+    used_4pi: whether 4π factor was applied in conversion
     """
     tensors_per_molecule_m3: Dict[float, np.ndarray]
     is_chiT_input: bool = True
@@ -75,7 +75,7 @@ def read_orca_temp_dependent_chiT_tensor(text: str, *, use_4pi: bool = True) -> 
         text,
         temp_regex=_ORCA_TEMP,
         header_regex=_ORCA_TENSOR_HEADER,
-        header_stop_regexes=[_ORCA_TEMP],  # next TEMP -> stop searching tensor for current block
+        header_stop_regexes=[_ORCA_TEMP],
         use_4pi=use_4pi,
     )
     if not tensors_m3_per_mol:
@@ -129,7 +129,6 @@ def delta_chi_ax_rh_from_principal(chi_xx: float, chi_yy: float, chi_zz: float) 
     Conventions:
       Delta_chi_ax = chi_zz - 1/2(chi_xx + chi_yy)
       Delta_chi_rh = chi_xx - chi_yy
-
     Units follow input (here: m^3/molecule).
     """
     d_ax = float(chi_zz - 0.5 * (chi_xx + chi_yy))

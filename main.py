@@ -563,7 +563,6 @@ def zero_intercept_wls(x: np.ndarray, y: np.ndarray, sigma_y: np.ndarray):
 # Qt table models for results
 # -----------------------------
 class DictTableModel(QAbstractTableModel):
-    """Display dict-like rows: list of (key, value)."""
     def __init__(self, data: Dict[str, float], parent=None):
         super().__init__(parent)
         self.keys = list(data.keys())
@@ -1511,10 +1510,10 @@ class MainWindow(QMainWindow):
                 x1 = 1.0 / T
                 x2 = 1.0 / (T ** 2)
 
-                # 두-항 WLS: δ ≈ a1*(1/T) + b1*(1/T^2)
+                # Two-term WLS: δ ≈ a1*(1/T) + b1*(1/T^2)
                 a1, b1, sa1, sb1 = two_term_wls(x1, x2, d, w)
 
-                # T_ref 분해(ppm)
+                # T_ref FCS PCS separation(ppm)
                 contact_Tref = a1 / T_ref
                 pcs_Tref = b1 / (T_ref ** 2)
 
@@ -2067,7 +2066,7 @@ class MainWindow(QMainWindow):
         # --- convert to molar units ---
         NA = const.N_A
         mu0 = const.mu_0
-        # 방법1: μ0 미고려 (일부 문헌)
+        # 방법1: μ0 미고려
         dchi_mol_no_mu0 = dchi_ext * NA
         # 방법2: μ0 고려한 SI 정의
         dchi_mol_with_mu0 = dchi_ext * NA / mu0
