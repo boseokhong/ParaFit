@@ -31,6 +31,18 @@ from scipy.optimize import least_squares
 import matplotlib.pyplot as plt
 import scipy.constants as const
 
+from logic.orca_viewer import OrcaChiViewer, OrcaViewerInputs
+from logic.orca_susc import (
+    read_orca_temp_dependent_chiT_tensor,
+    interpolate_tensor,
+    make_traceless,
+    mehring_order_from_tensor,
+    delta_chi_ax_rh_from_principal,
+    attach_pcs_from_chi,
+    estimate_D2_D3_from_orca_chi_ax,
+)
+from logic.orca_AILFT import parse_orca_ailft
+
 # -----------------------------
 # Data structures and fitting core
 # -----------------------------
@@ -122,8 +134,6 @@ def prepare_dataset(df: pd.DataFrame,
     # Dataset에 has_G 플래그를 담아 반환 (Dataset 정의에 has_G: bool 필드가 있어야 함)
     return Dataset(groups=groups, ridge_lambda=0.0, has_G=has_G)
 
-
-
 def solve_Fi_for_group(sub: pd.DataFrame,
                        S1: float, S2: float, D2: float, D3: float,
                        ridge_lambda: float = 0.0) -> float:
@@ -145,7 +155,6 @@ def solve_Fi_for_group(sub: pd.DataFrame,
     if ridge_lambda > 0.0:
         return wxy / (wx2 + float(ridge_lambda))
     return wxy / wx2
-
 
 # -----lambda swip util start --------
 def sweep_ridge_lambda(ds: Dataset, init: dict, fix: dict,
@@ -786,7 +795,7 @@ class CopyableTableView(QTableView):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Para shift contribution analysis (Global Fitting)")
+        self.setWindowTitle("ParaFit")
         self.resize(1150, 900)
 
         self.df: Optional[pd.DataFrame] = None
@@ -795,6 +804,11 @@ class MainWindow(QMainWindow):
         self.fi_map: Optional[Dict[str, float]] = None
         self.diag: Optional[Dict[str, dict]] = None
         self.csv_path: Optional[Path] = None
+
+        # ORCA
+        self.orca_out_path: Optional[Path] = None
+        self.orca_chi_series = None  # ChiTensorSeries
+        self.orca_ailft = None       # AILFTResult
 
         # baseline results
         self.baseline_globals: Optional[Dict[str, float]] = None
@@ -809,14 +823,27 @@ class MainWindow(QMainWindow):
         # --- file and column mapping ---
         file_row = QHBoxLayout()
         self.lb_file = QLabel("No CSV loaded")
-        btn_load = QPushButton("Load CSV")
-        btn_load.clicked.connect(self.on_load_csv)
         btn_save_sample = QPushButton("Save Sample CSV")
         btn_save_sample.clicked.connect(self.on_save_sample_csv)
+        btn_load = QPushButton("Load CSV")
+        btn_load.clicked.connect(self.on_load_csv)
+        btn_load_orca_chi = QPushButton("Load ORCA .out (χ mode)")
+        btn_load_orca_chi.clicked.connect(self.on_load_orca_chi)
+        btn_load_orca_ailft = QPushButton("Load ORCA .out (AILFT mode)")
+        btn_load_orca_ailft.clicked.connect(self.on_load_orca_ailft)
         file_row.addWidget(self.lb_file, 1)
         file_row.addWidget(btn_save_sample, 0)
         file_row.addWidget(btn_load, 0)
+        file_row.addWidget(btn_load_orca_chi, 0)
+        file_row.addWidget(btn_load_orca_ailft, 0)
         layout.addLayout(file_row)
+
+        btn_view_orca = QPushButton("View ORCA table")
+        btn_view_orca.clicked.connect(self.on_view_orca_table)
+        file_row.addWidget(btn_view_orca, 0)
+        self.btn_view_orca = btn_view_orca
+        self.btn_view_orca.setEnabled(False)
+        self._orca_viewer = None
 
         map_box = QGroupBox("Column mapping")
         map_form = QFormLayout(map_box)
@@ -1083,6 +1110,204 @@ class MainWindow(QMainWindow):
 
         self.set_controls_enabled(True)
         self.append_log(f"Loaded CSV with {len(df)} rows and columns: {cols}")
+
+    def on_view_orca_table(self):
+        if self.orca_chi_series is None:
+            QMessageBox.warning(self, "No ORCA data", "Load ORCA χ(T) output first.")
+            return
+
+        if self._orca_viewer is None:
+            self._orca_viewer = OrcaChiViewer(None)
+            self._orca_viewer.setWindowFlags(Qt.WindowType.Window)
+
+        # try to pass CSV mapping too (for Tab2)
+        df = self.df
+        nuc_col = self.cmb_nuc.currentText()
+        if nuc_col in (None, "", "<none>"):
+            nuc_col = None
+        T_col = self.cmb_T.currentText() if df is not None else None
+        if T_col in (None, "", "<none>"):
+            T_col = None
+        G_col = self.cmb_G.currentText() if df is not None else None
+        if G_col in (None, "", "<none>"):
+            G_col = None
+        self._orca_viewer.set_inputs(OrcaViewerInputs(
+            series=self.orca_chi_series,
+            df=df,
+            nuc_col=nuc_col,
+            T_col=T_col,
+            G_col=G_col,
+        ))
+        self._orca_viewer.show()
+        self._orca_viewer.raise_()
+
+    def on_load_orca_chi(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open ORCA output", "", "ORCA out (*.out *.log *.txt);;All files (*.*)"
+        )
+        if not path:
+            return
+
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+            series = read_orca_temp_dependent_chiT_tensor(text, use_4pi=True)  # per-molecule m^3
+        except Exception as e:
+            QMessageBox.critical(self, "ORCA parse error", f"Failed to parse ORCA χ tensor blocks:\n{e}")
+            return
+
+        self.orca_out_path = Path(path)
+        self.orca_chi_series = series
+        self.append_log(
+            f"[ORCA] Loaded χ(T) tensors from: {self.orca_out_path.name} "
+            f"(n={len(series.tensors_per_molecule_m3)})"
+        )
+
+        # Tref
+        try:
+            Tref = float(eval(self.ed_Tref_linear.text(), {}, {}))
+        except Exception:
+            Tref = 298.0
+
+        # compute Δχ at Tref for logging (per molecule, m^3)
+        try:
+            chi = interpolate_tensor(series, Tref)
+            chi = make_traceless(chi)
+            vals, _ = mehring_order_from_tensor(chi)
+            chi_xx, chi_yy, chi_zz = map(float, vals)
+            d_ax, d_rh = delta_chi_ax_rh_from_principal(chi_xx, chi_yy, chi_zz)
+            self.append_log(f"[ORCA] Δχ_ax(Tref={Tref:.2f} K) (m^3/molecule, traceless+Mehring): {d_ax:.6e}")
+            self.append_log(f"[ORCA] Δχ_rh(Tref={Tref:.2f} K) (m^3/molecule, traceless+Mehring): {d_rh:.6e}")
+        except Exception as e:
+            self.append_log(f"[ORCA] Warning: could not compute Δχ at Tref: {e}")
+
+        # attach PCS_guess_orca_ppm if CSV already loaded and has T & Gi_raw selected
+        if self.df is None:
+            return
+
+        col_T = self.cmb_T.currentText()
+        col_Graw = self.cmb_G.currentText()  # this is Gi_raw (Å^-3) in your convention
+
+        if col_T == "<none>" or col_Graw == "<none>":
+            self.append_log("[ORCA] CSV column mapping incomplete (T/G not selected). Skipping PCS_guess column.")
+            return
+        if col_T not in self.df.columns or col_Graw not in self.df.columns:
+            self.append_log(f"[ORCA] CSV mapping invalid: T='{col_T}', G='{col_Graw}'. Skipping PCS_guess column.")
+            return
+
+        try:
+            df2 = self.df.copy()
+
+            # ---- range check (to warn about clamping) ----
+            Ts_avail = sorted(series.tensors_per_molecule_m3.keys())
+            Tmin, Tmax = float(Ts_avail[0]), float(Ts_avail[-1])
+
+            # count invalid and out-of-range for log
+            Tvals = pd.to_numeric(df2[col_T], errors="coerce").to_numpy(float)
+            Gvals = pd.to_numeric(df2[col_Graw], errors="coerce").to_numpy(float)
+            n_bad = int(np.sum(~np.isfinite(Tvals) | ~np.isfinite(Gvals)))
+            n_oob = int(np.sum(np.isfinite(Tvals) & ((Tvals < Tmin) | (Tvals > Tmax))))
+
+            # ---- compute PCS guess in ppm using your convention ----
+            tag = Path(path).stem[:24]
+            new_col = f"PCS_guess_orca_ppm__{tag}"
+
+            # uses: Gi_raw (Å^-3) and Δχ(m^3/molecule) -> PCS(ppm) = Gi_raw * Δχ * 1e36 / (12π)
+            df2 = attach_pcs_from_chi(
+                df2,
+                series,
+                T_col=col_T,
+                Gax_raw_col=col_Graw,
+                Grh_raw_col=None,  # set if you later have a Grh column
+                out_col=new_col,
+                traceless=True,
+                mehring=True,
+                include_12pi=True,
+            )
+
+            self.df = df2
+
+            # refresh combobox columns so new col appears
+            cols = list(self.df.columns)
+            for cmb in [self.cmb_nuc, self.cmb_T, self.cmb_delta, self.cmb_G, self.cmb_w, self.cmb_pcs_guess]:
+                cur = cmb.currentText()
+                cmb.blockSignals(True)
+                cmb.clear()
+                cmb.insertItem(0, "<none>")
+                cmb.addItems(cols)
+                idx2 = cmb.findText(cur)
+                cmb.setCurrentIndex(idx2 if idx2 >= 0 else 0)
+                cmb.blockSignals(False)
+
+            # auto-select pcs_guess col
+            idx3 = self.cmb_pcs_guess.findText(new_col)
+            if idx3 >= 0:
+                self.cmb_pcs_guess.setCurrentIndex(idx3)
+
+            self.append_log(f"[ORCA] Added column '{new_col}' (PCS guess in ppm; Gi_raw=Å^-3, χ per-molecule m^3).")
+            self.append_log(
+                f"[ORCA] ORCA χ(T) grid: Tmin={Tmin:.2f} K, Tmax={Tmax:.2f} K. "
+                f"Rows with invalid T/G: {n_bad}. Rows outside grid (clamped): {n_oob}."
+            )
+
+        except Exception as e:
+            self.append_log(f"[ORCA] Could not attach PCS_guess column: {e}")
+
+        try:
+            D2, D3, rmse = estimate_D2_D3_from_orca_chi_ax(self.orca_chi_series, traceless=True, mehring=True)
+            self.append_log("[ORCA-fit] Fit Δχ_ax(T) ≈ (D2/1e6)/T^2 + (D3/1e6)/T^3  (Δχ in m^3/molecule)")
+            self.append_log(f"[ORCA-fit] Suggested init for Extended model (when G is SI-scaled): "
+                            f"D2={D2:.6e}, D3={D3:.6e}  (units: ppm·m^3·K^n/molecule), "
+                            f"RMSE(Δχ)={rmse:.3e} m^3/molecule")
+            if hasattr(self, "ed_D2_init"):
+                self.ed_init_D2.setText(f"{D2:.6e}")
+            if hasattr(self, "ed_D3_init"):
+                self.ed_init_D3.setText(f"{D3:.6e}")
+
+        except Exception as e:
+            self.append_log(f"[ORCA-fit] Could not estimate D2/D3 from ORCA: {e}")
+
+        self.btn_view_orca.setEnabled(True)
+
+    def on_load_orca_ailft(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open ORCA output", "", "ORCA out (*.out *.log *.txt);;All files (*.*)")
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+            ailft = parse_orca_ailft(text)
+        except Exception as e:
+            QMessageBox.critical(self, "ORCA parse error", f"Failed to parse ORCA AILFT block:\n{e}")
+            return
+
+        self.orca_out_path = Path(path)
+        self.orca_ailft = ailft
+
+        # log summary
+        self.append_log(f"[ORCA] Loaded AILFT from: {self.orca_out_path.name}")
+        self.append_log(f"  config={ailft.configuration}, shell={ailft.shell_type}, CI_blocks={ailft.n_ci_blocks}, MOs={ailft.active_mo_range}, center_atom={ailft.metal_center_atom}")
+        if ailft.soc_constant_cm1 is not None:
+            self.append_log(f"  SOC zeta (cm^-1): {ailft.soc_constant_cm1:.2f}")
+        if ailft.soc_constants:
+            tags = ", ".join([f"{k}={v:.2f}" for k, v in ailft.soc_constants.items()])
+            self.append_log(f"  SOC tags: {tags}")
+        if ailft.slater_condon_cm1:
+            tags = ", ".join([f"{k}={v:.1f}" for k, v in ailft.slater_condon_cm1.items()])
+            self.append_log(f"  Slater-Condon (cm^-1): {tags}")
+        if ailft.racah_cm1:
+            tags = ", ".join([f"{k}={v:.1f}" for k, v in ailft.racah_cm1.items()])
+            self.append_log(f"  Racah (cm^-1): {tags}")
+        if ailft.lf_eigenfunctions:
+            self.append_log(f"  LF eigenfunctions parsed: n={len(ailft.lf_eigenfunctions)} (show first 3)")
+            for lev in ailft.lf_eigenfunctions[:3]:
+                self.append_log(f"    {lev.idx}: {lev.energy_cm1:.1f} cm^-1 ({lev.energy_ev:.3f} eV)")
+        if ailft.vlft_au is not None:
+            try:
+                evals = np.linalg.eigvalsh(ailft.vlft_au)
+                evals_cm1 = evals * 219474.6313705
+                self.append_log(f"  VLFT: dim={ailft.vlft_au.shape[0]} | one-electron levels (cm^-1, rel): "
+                                f"{', '.join(f'{(x - evals_cm1.min()):.1f}' for x in evals_cm1)}")
+            except Exception:
+                self.append_log("  VLFT: parsed (eigenvalue summary failed)")
 
     def on_save_sample_csv(self):
         """Create and save a template CSV with expected headers and synthetic rows."""
