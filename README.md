@@ -61,7 +61,7 @@ Both are exported.
 - Optional **PCS-guess prior** at defined T_ref  
 - **Linear two-term WLS** and **Cartesian OLS** (PCS vs Gᵢ)  
 - Exports **CSV/JSON/plot**  
-- $Δχ_ax(T)$ plotting and export (extended, baseline, linear)
+- $Δχ_{ax}(T)$ plotting and export (extended, baseline, linear)
 
 ---
 
