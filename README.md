@@ -2,6 +2,7 @@
 ![version](https://img.shields.io/badge/version-0.2.0-blue) ![license](https://img.shields.io/badge/license-BSD%203--Clause-green)
 
 
+<img width="1203" height="762" alt="image" src="https://github.com/user-attachments/assets/057ad09e-785b-4cc0-bc6d-713cf6146c3c" />
 ParaFit is a GUI application for analyzing temperature-dependent paramagnetic NMR shifts using Bleaney-type models, including linear, classical (baseline), and extended global fitting approaches.
 
 It implements a global nonlinear fitting framework with **variable projection** for per-nucleus contact factors and shared magnetic susceptibility parameters, together with diagnostic exports and susceptibility reconstruction.
