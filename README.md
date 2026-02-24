@@ -8,6 +8,18 @@ ParaFit is a GUI application for analyzing temperature-dependent paramagnetic NM
 It implements a global nonlinear fitting framework with **variable projection** for per-nucleus contact factors and shared magnetic susceptibility parameters, together with diagnostic exports and susceptibility reconstruction.
 
 ---
+## Requirements
+
+Python 3.10+ recommended.
+> [!NOTE]
+> The code requires `PyQt6`, `numpy`, `pandas`, `scipy`, `matplotlib` packages to run.
+
+---
+## Running
+
+python main.py
+
+---
 ## Model
 
 For each nucleus *i*:
@@ -193,20 +205,6 @@ Includes a Ridge $λ$ sweep tool:
 >⚠️ This module is currently being expanded. Additional functionality will be added soon.
 
 ---
-
-## Requirements
-
-Python 3.10+ recommended.
-> [!NOTE]
-> The code requires `PyQt6`, `numpy`, `pandas`, `scipy`, `matplotlib` packages to run.
-
----
-## Running
-
-python main.py
-
----
-
 ## Input CSV Format
 
 Minimal example structure:
