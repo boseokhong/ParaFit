@@ -300,7 +300,7 @@ class RidgeSweepWindow(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save λ sweep CSV", "lambda_sweep.csv", "CSV (*.csv)")
         if not path: return
         try:
-            self._last_df.to_csv(path, index=False)
+            self._last_df.to_csv(path, index=False, encoding="utf-8-sig")
             QMessageBox.information(self, "Saved", f"Saved: {path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
@@ -627,28 +627,48 @@ def two_term_wls(x1: np.ndarray, x2: np.ndarray, y: np.ndarray, w: np.ndarray):
     """
     절편 없는 WLS: y ≈ a*x1 + b*x2
     반환: a, b, sa, sb  (추정치와 표준오차)
+    정책:
+      - n < 2: a,b 불가 → 전부 NaN
+      - n = 2: a,b 가능 → sa,sb는 NaN
+      - n >= 3: sa,sb 계산
     """
     x1 = np.asarray(x1, float); x2 = np.asarray(x2, float)
     y  = np.asarray(y,  float); w  = np.asarray(w,  float)
+
+    # finite + w>0만 사용
+    mask = np.isfinite(x1) & np.isfinite(x2) & np.isfinite(y) & np.isfinite(w) & (w > 0)
+    x1 = x1[mask]; x2 = x2[mask]; y = y[mask]; w = w[mask]
+
+    n = int(len(y))
+    if n < 2:
+        return float("nan"), float("nan"), float("nan"), float("nan")
+
     X = np.column_stack([x1, x2])
     sw = np.sqrt(w)
     Xw = X * sw[:, None]
     yw = y * sw
     XtWX = Xw.T @ Xw
     XtWy = Xw.T @ yw
+
     try:
         beta = np.linalg.solve(XtWX, XtWy)
         XtWX_inv = np.linalg.inv(XtWX)
     except np.linalg.LinAlgError:
         XtWX_inv = np.linalg.pinv(XtWX)
         beta = XtWX_inv @ XtWy
+
     a, b = float(beta[0]), float(beta[1])
 
+    # n=2이면 SE는 정의 불가 → NaN
+    if n < 3:
+        return a, b, float("nan"), float("nan")
+
     r = y - X @ beta
-    dof = max(len(y) - 2, 1)
+    dof = n - 2  # >=1
     sigma2 = float((sw * r) @ (sw * r)) / dof
     cov = sigma2 * XtWX_inv
-    sa = math.sqrt(float(cov[0,0])); sb = math.sqrt(float(cov[1,1]))
+    sa = math.sqrt(float(cov[0,0]))
+    sb = math.sqrt(float(cov[1,1]))
     return a, b, sa, sb
 
 class FiTableModel(QAbstractTableModel):
@@ -1338,7 +1358,7 @@ class MainWindow(QMainWindow):
                     "PCS_guess_ppm": np.nan  # ← 새 열
                 })
 
-        pd.DataFrame(rows).to_csv(out_path, index=False)
+        pd.DataFrame(rows).to_csv(out_path, index=False, encoding="utf-8-sig")
         self.append_log(f"Saved sample CSV: {out_path}")
         self.append_log("Sample CSV includes a 'PCS_guess_ppm' column (empty by default).")
 
@@ -1566,13 +1586,26 @@ class MainWindow(QMainWindow):
             self.tbl_linear.setModel(LinearTableModel(self.linear_results))
             self.append_log(f"[Linear fit δ = a/T + b/T^2] (T_ref={T_ref:g} K)")
             self.append_log("  Note: Interpretation b/Gi = D2 is exact for S2≈0, D3≈0 (classical Bleaney).")
+
+            def _fmt_pm(val, se):
+                if not np.isfinite(val):
+                    return "--"
+                if not np.isfinite(se):
+                    return f"{val:.6g}±--"
+                return f"{val:.6g}±{se:.2g}"
+
+            def _fmt_num(val, fmt="{:.6g}"):
+                if not np.isfinite(val):
+                    return "--"
+                return fmt.format(val)
+
             for nuc, v in sorted(self.linear_results.items(), key=lambda kv: natural_key(kv[0])):
                 self.append_log(
-                    f"  {nuc}: a={v['a1']:.6g}±{v['sa1']:.2g}, "
-                    f"b={v['b1']:.6g}±{v['sb1']:.2g}, "
-                    f"fcs_at_Tref={v['contact_Tref_ppm']:.6g} ppm, "
-                    f"pcs_at_Tref={v['pcs_Tref_ppm']:.6g} ppm, "
-                    f"D2_i={v['D2_i']:.6g}"
+                    f"  {nuc}: a={_fmt_pm(v['a1'], v['sa1'])}, "
+                    f"b={_fmt_pm(v['b1'], v['sb1'])}, "
+                    f"fcs_at_Tref={_fmt_num(v['contact_Tref_ppm'])} ppm, "
+                    f"pcs_at_Tref={_fmt_num(v['pcs_Tref_ppm'])} ppm, "
+                    f"D2_i={_fmt_num(v['D2_i'])}"
                 )
 
         # --- Linear fit Cartesian OLS (PCS vs G_i, T_ref) — Gi 있을 때만 ---
@@ -1841,7 +1874,7 @@ class MainWindow(QMainWindow):
                     "DeltaChi_ax_Tref_m3_per_mol_no_mu0": v["dchi_Tref_per_molecule"] * NA,
                     "DeltaChi_ax_Tref_m3_per_mol_with_mu0": v["dchi_Tref_per_molecule"] * NA / mu0,
                 })
-            pd.DataFrame(rows).to_csv(linear_dir / "linear_approx_table.csv", index=False)
+            pd.DataFrame(rows).to_csv(linear_dir / "linear_approx_table.csv", index=False, encoding="utf-8-sig")
 
             if getattr(self, "linear_summary", None):
                 ls = self.linear_summary
@@ -1854,11 +1887,11 @@ class MainWindow(QMainWindow):
                     "DeltaChi_ax_Tref_m3_per_mol_weighted": ls["DeltaChi_ax_Tref_m3_per_mol_weighted"],
                     "DeltaChi_ax_Tref_m3_per_mol_with_mu0_weighted":
                         ls["DeltaChi_ax_Tref_per_molecule_weighted"] * NA / mu0
-                }]).to_csv(linear_dir / "linear_approx_weighted_summary.csv", index=False)
+                }]).to_csv(linear_dir / "linear_approx_weighted_summary.csv", index=False, encoding="utf-8-sig")
 
         # --- Linear fit Cartesian OLS summary export ---
         if getattr(self, "cartesian_ols", None):
-            pd.DataFrame([self.cartesian_ols]).to_csv(linear_dir / "cartesian_ols_summary.csv", index=False)
+            pd.DataFrame([self.cartesian_ols]).to_csv(linear_dir / "cartesian_ols_summary.csv", index=False, encoding="utf-8-sig")
 
         # 개별 포인트(핵별) 산포도 원자료도 저장(원하면)
         if hasattr(self, "linear_results") and self.linear_results:
@@ -1882,7 +1915,7 @@ class MainWindow(QMainWindow):
                     "sigma_PCS_Tref_ppm": sigma_pcs
                 })
             if rows_cart:
-                pd.DataFrame(rows_cart).to_csv(linear_dir / "cartesian_points_PCS_vs_Gi.csv", index=False)
+                pd.DataFrame(rows_cart).to_csv(linear_dir / "cartesian_points_PCS_vs_Gi.csv", index=False, encoding="utf-8-sig")
 
         # ---------- helper to export one model ----------
         def export_model(ds, globals_out, fi_map, per_folder, tag="extended"):
@@ -1910,7 +1943,7 @@ class MainWindow(QMainWindow):
                     "contact_ppm": contact,
                     "pseudocontact_ppm": pc,
                 })
-                df_out.to_csv(per_folder / f"{nuc}_{tag}.csv", index=False)
+                df_out.to_csv(per_folder / f"{nuc}_{tag}.csv", index=False, encoding="utf-8-sig")
 
             # summary tables
             model_dir = per_folder.parent
@@ -1927,7 +1960,7 @@ class MainWindow(QMainWindow):
                 "RMSE": met["RMSE"], "SSE": met["SSE"], "N_points": int(met["N_points"]),
             }
             row.update(compute_tau_metrics(globals_out, T_ref))
-            pd.DataFrame([row]).to_csv(model_dir / "globals_and_metrics.csv", index=False)
+            pd.DataFrame([row]).to_csv(model_dir / "globals_and_metrics.csv", index=False, encoding="utf-8-sig")
 
             # 2) per-nucleus summary (Fi + diagnostics merged)
             fi_rows = [{"nucleus": k, "Fi": v} for k, v in fi_map.items()]
@@ -1969,7 +2002,7 @@ class MainWindow(QMainWindow):
             remaining_cols = [c for c in df_sum.columns if c not in ordered_cols]
             df_sum = df_sum[ordered_cols + remaining_cols]
 
-            df_sum.to_csv(model_dir / "summary_per_nucleus.csv", index=False)
+            df_sum.to_csv(model_dir / "summary_per_nucleus.csv", index=False, encoding="utf-8-sig")
 
         # ---------- export extended ----------
         export_model(self.dataset, self.globals_out, self.fi_map, per_ext, tag="extended")
@@ -1998,7 +2031,7 @@ class MainWindow(QMainWindow):
                     "Δχ_ax(T_ref) per mol (m^3/mol; no μ0)": v["dchi_Tref_m3_per_mol"],
                     "T_ref_used_K": T_ref
                 })
-            pd.DataFrame(lin_rows).to_csv(linear_dir / "linear_approx_table_for_gui.csv", index=False)
+            pd.DataFrame(lin_rows).to_csv(linear_dir / "linear_approx_table_for_gui.csv", index=False, encoding="utf-8-sig")
 
         # # 2) Diagnostics per nucleus — Extended (what you see in the right-side table)
         # if self.diag:
@@ -2008,7 +2041,7 @@ class MainWindow(QMainWindow):
         #         row.update(self.diag[
         #                        nuc])  # has: n_points, T_min_K, T_max_K, RMSE_ppm, fcs_at_Tref_ppm, pcs_at_Tref_ppm, ref_T_K
         #         diag_rows_ext.append(row)
-        #     pd.DataFrame(diag_rows_ext).to_csv(extended_dir / "diagnostics_per_nucleus.csv", index=False)
+        #     pd.DataFrame(diag_rows_ext).to_csv(extended_dir / "diagnostics_per_nucleus.csv", index=False, encoding="utf-8-sig")
         #
         # # 3) Diagnostics per nucleus — Baseline (if available)
         # if getattr(self, "baseline_diag", None):
@@ -2017,7 +2050,7 @@ class MainWindow(QMainWindow):
         #         row = {"nucleus": nuc}
         #         row.update(self.baseline_diag[nuc])
         #         diag_rows_base.append(row)
-        #     pd.DataFrame(diag_rows_base).to_csv(baseline_dir / "diagnostics_per_nucleus.csv", index=False)
+        #     pd.DataFrame(diag_rows_base).to_csv(baseline_dir / "diagnostics_per_nucleus.csv", index=False, encoding="utf-8-sig")
 
         self.append_log(f"Saved CSV data into: {out_dir}")
 
@@ -2079,7 +2112,7 @@ class MainWindow(QMainWindow):
             "DeltaChi_ax_m3_per_mol_no_mu0": dchi_mol_no_mu0,
             "DeltaChi_ax_m3_per_mol_with_mu0": dchi_mol_with_mu0
         })
-        df_ext.to_csv(out_dir / "DeltaChi_ax_vs_T_extended.csv", index=False)
+        df_ext.to_csv(out_dir / "DeltaChi_ax_vs_T_extended.csv", index=False, encoding="utf-8-sig")
 
         # 5) Baseline Δχ_ax(T)
         if self.baseline_globals:
@@ -2098,7 +2131,7 @@ class MainWindow(QMainWindow):
                 "DeltaChi_ax_m3_per_mol_no_mu0": dchi_mol_no_mu0_base,
                 "DeltaChi_ax_m3_per_mol_with_mu0": dchi_mol_with_mu0_base
             })
-            df_base.to_csv(out_dir / "DeltaChi_ax_vs_T_baseline.csv", index=False)
+            df_base.to_csv(out_dir / "DeltaChi_ax_vs_T_baseline.csv", index=False, encoding="utf-8-sig")
 
         # 6) Linear approx model (δ = a/T + b/T^2) 기반 Δχ_ax(T)
         #    D2_lin = 가중평균 D2 (없으면 단순 평균) 사용, D3=0 가정
@@ -2198,7 +2231,7 @@ class MainWindow(QMainWindow):
 
             # ---- 3) 저장/로그 ----
             if df_lin is not None:
-                df_lin.to_csv(out_dir / "DeltaChi_ax_vs_T_linear_approx.csv", index=False)
+                df_lin.to_csv(out_dir / "DeltaChi_ax_vs_T_linear_approx.csv", index=False, encoding="utf-8-sig")
                 self.append_log("[Linear approx] Saved Δχ_ax(T) CSV (weighted/unweighted).")
             else:
                 self.append_log("[Linear approx] Cannot export: no valid D2 (neither weighted nor unweighted).")
