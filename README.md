@@ -1,5 +1,6 @@
 # ParaFit — Bleaney Model Fitting GUI
-![version](https://img.shields.io/badge/version-0.2.0-blue) ![license](https://img.shields.io/badge/license-BSD%203--Clause-green)
+![version](https://img.shields.io/badge/version-0.2.0-blue) ![license](https://img.shields.io/badge/license-BSD%203--Clause-green) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18752246.svg)](https://doi.org/10.5281/zenodo.18752246)
+
 
 
 <img width="1203" height="762" alt="image" src="https://github.com/user-attachments/assets/057ad09e-785b-4cc0-bc6d-713cf6146c3c" />
