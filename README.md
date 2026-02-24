@@ -45,10 +45,9 @@ $$
 $$
 
 which yields approximately
+
 $$
-D_{2,i} \approx \frac{b}{G_i}
-\quad
-(S_2 \approx 0,\; D_3 \approx 0)
+D_{2,i} \approx \frac{b}{G_i}\quad(S_2 \approx 0,\; D_3 \approx 0)
 $$
 
 This hierarchy enables consistent comparison between phenomenological linear analysis and physically constrained global models.
@@ -61,24 +60,13 @@ The geometrical factor $G_i$ may be provided in Å⁻³.
 It is internally rescaled to SI-compatible units as:
 
 $$
-G_i^{(\mathrm{SI})}
-=
-G_i^{(\mathrm{Å^{-3}})}
-\times
-\frac{10^{30}}{12\pi}
+G_i^{(\mathrm{SI})}=G_i^{(\mathrm{Å^{-3}})}\times\frac{10^{30}}{12\pi}
 $$
 
 The temperature-dependent axial susceptibility anisotropy is reconstructed as:
 
 $$
-\Delta\chi_{\mathrm{ax}}(T)
-=
-12\pi
-\left(
-\frac{D_2}{T^2}+
-\frac{D_3}{T^3}
-\right)
-\times 10^{-6}
+\Delta\chi_{\mathrm{ax}}(T)=12\pi\left(\frac{D_2}{T^2}+\frac{D_3}{T^3}\right)\times 10^{-6}
 $$
 
 Exports include:
@@ -181,7 +169,8 @@ Includes a Ridge $λ$ sweep tool:
 - Can attach ORCA-based PCS guess column to CSV 
 - Can estimate initial $D_2$ and $D_3$ from $Δχ_{ax}(T)$
 
-⚠️ This module is currently being expanded. Additional functionality will be added soon.
+> [!NOTE]
+>⚠️ This module is currently being expanded. Additional functionality will be added soon.
 
 
 ---
@@ -199,7 +188,8 @@ Includes a Ridge $λ$ sweep tool:
 - Ligand field eigenvalues 
 - VLFT matrix (if available)
 
-⚠️ This module is currently being expanded. Additional functionality will be added soon.
+> [!NOTE]
+>⚠️ This module is currently being expanded. Additional functionality will be added soon.
 
 ---
 
@@ -225,10 +215,10 @@ H3,298,1.23,2.1,1.0,
 H3,308,1.11,2.1,1.0,
 H5,298,0.87,1.3,1.0,
 ```
-Notes: 
-- Temperatures must be in Kelvin. 
-- $G_i$ is assumed to be in $Å^{-3}$. 
-- Internally scaled to SI via: $G_{scaled} = G_{raw} × (10^{30} / 12π)$
+> [!NOTE]
+>- Temperatures must be in Kelvin. 
+>- $G_i$ is assumed to be in $Å^{-3}$. 
+>- Internally scaled to SI via: $G_{scaled} = G_{raw} × (10^{30} / 12π)$
 
 The GUI can generate a template via `Save Sample CSV`.
 
