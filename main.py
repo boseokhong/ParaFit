@@ -958,7 +958,6 @@ class MainWindow(QMainWindow):
         self.btn_view_dchi = QPushButton("View Δχ_ax Plot")
         self.btn_view_dchi.clicked.connect(self.on_view_dchi)
 
-
         for b in (self.btn_fit, self.btn_sweep_ridge, self.btn_save_json, self.btn_save_plots,
                   self.btn_save_data, self.btn_save_dchi, self.btn_view_dchi):
             btn_row.addWidget(b)
