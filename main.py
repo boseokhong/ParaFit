@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox, QLineEdit,
     QPushButton, QGroupBox, QCheckBox, QSplitter, QTableView, QTextEdit, QInputDialog,
-    QAbstractItemView, QMenu
+    QAbstractItemView, QMenu, QSizePolicy
 )
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -842,6 +842,9 @@ class MainWindow(QMainWindow):
         # --- file and column mapping ---
         file_row = QHBoxLayout()
         self.lb_file = QLabel("No CSV loaded")
+        self.lb_file.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.lb_file.setMinimumWidth(0)
+        self.lb_file.setWordWrap(False)
         btn_save_sample = QPushButton("Save Sample CSV")
         btn_save_sample.clicked.connect(self.on_save_sample_csv)
         btn_load = QPushButton("Load CSV")
@@ -1106,7 +1109,8 @@ class MainWindow(QMainWindow):
 
         self.df = df
         self.csv_path = Path(path)
-        self.lb_file.setText(str(self.csv_path))
+        self.lb_file.setText(self.csv_path.name)  # file name
+        self.lb_file.setToolTip(str(self.csv_path))  # full path - mouse hover
 
         # populate combo boxes with columns
         cols = list(df.columns)
