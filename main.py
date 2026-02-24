@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox, QLineEdit,
     QPushButton, QGroupBox, QCheckBox, QSplitter, QTableView, QTextEdit, QInputDialog,
-    QAbstractItemView, QMenu, QSizePolicy
+    QAbstractItemView, QMenu, QSizePolicy, QGridLayout
 )
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -815,7 +815,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ParaFit")
-        self.resize(1150, 900)
+        self.resize(950, 830)
 
         self.df: Optional[pd.DataFrame] = None
         self.dataset: Optional[Dataset] = None
@@ -886,53 +886,73 @@ class MainWindow(QMainWindow):
         # --- options ---
         opt_box = QGroupBox("Fitting options")
         opt_form = QFormLayout(opt_box)
+
+        # init edits
         self.ed_init_S1 = QLineEdit("100.0")
         self.ed_init_S2 = QLineEdit("0.0")
         self.ed_init_D2 = QLineEdit("1e4")
         self.ed_init_D3 = QLineEdit("0.0")
-        opt_form.addRow("Init S1", self.ed_init_S1)
-        opt_form.addRow("Init S2", self.ed_init_S2)
-        opt_form.addRow("Init D2", self.ed_init_D2)
-        opt_form.addRow("Init D3", self.ed_init_D3)
 
+        # fix checks + edits
         self.chk_fix_S1 = QCheckBox("Fix S1")
         self.chk_fix_S2 = QCheckBox("Fix S2")
         self.chk_fix_D2 = QCheckBox("Fix D2")
         self.chk_fix_D3 = QCheckBox("Fix D3")
-        self.ed_fix_S1 = QLineEdit(); self.ed_fix_S1.setPlaceholderText("value if fixed")
-        self.ed_fix_S2 = QLineEdit(); self.ed_fix_S2.setPlaceholderText("value if fixed")
-        self.ed_fix_D2 = QLineEdit(); self.ed_fix_D2.setPlaceholderText("value if fixed")
-        self.ed_fix_D3 = QLineEdit(); self.ed_fix_D3.setPlaceholderText("value if fixed")
 
-        fix_row1 = QHBoxLayout(); fix_row1.addWidget(self.chk_fix_S1); fix_row1.addWidget(self.ed_fix_S1)
-        fix_row2 = QHBoxLayout(); fix_row2.addWidget(self.chk_fix_S2); fix_row2.addWidget(self.ed_fix_S2)
-        fix_row3 = QHBoxLayout(); fix_row3.addWidget(self.chk_fix_D2); fix_row3.addWidget(self.ed_fix_D2)
-        fix_row4 = QHBoxLayout(); fix_row4.addWidget(self.chk_fix_D3); fix_row4.addWidget(self.ed_fix_D3)
-        opt_form.addRow(fix_row1)
-        opt_form.addRow(fix_row2)
-        opt_form.addRow(fix_row3)
-        opt_form.addRow(fix_row4)
+        self.ed_fix_S1 = QLineEdit();
+        self.ed_fix_S1.setPlaceholderText("value if fixed")
+        self.ed_fix_S2 = QLineEdit();
+        self.ed_fix_S2.setPlaceholderText("value if fixed")
+        self.ed_fix_D2 = QLineEdit();
+        self.ed_fix_D2.setPlaceholderText("value if fixed")
+        self.ed_fix_D3 = QLineEdit();
+        self.ed_fix_D3.setPlaceholderText("value if fixed")
+
+        for w in (self.ed_init_S1, self.ed_init_S2, self.ed_init_D2, self.ed_init_D3,
+                  self.ed_fix_S1, self.ed_fix_S2, self.ed_fix_D2, self.ed_fix_D3):
+            w.setMaximumWidth(120)
+            w.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        # ---- (Init + Fix) grid ----
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(6)
+
+        rows = [
+            ("Init S1", self.ed_init_S1, self.chk_fix_S1, self.ed_fix_S1),
+            ("Init S2", self.ed_init_S2, self.chk_fix_S2, self.ed_fix_S2),
+            ("Init D2", self.ed_init_D2, self.chk_fix_D2, self.ed_fix_D2),
+            ("Init D3", self.ed_init_D3, self.chk_fix_D3, self.ed_fix_D3),
+        ]
+
+        for r, (lab, init_ed, chk, fix_ed) in enumerate(rows):
+            grid.addWidget(QLabel(lab), r, 0)
+            grid.addWidget(init_ed, r, 1)
+            grid.addWidget(chk, r, 2)
+            grid.addWidget(fix_ed, r, 3)
+
+        opt_form.addRow(grid)
 
         self.ed_ridge = QLineEdit("0.0")
         opt_form.addRow("Ridge λ on Fi", self.ed_ridge)
 
         self.ed_pcs_prior_lambda = QLineEdit("0.0")
-        opt_form.addRow("PCS guess prior λ (1/ppm^2)", self.ed_pcs_prior_lambda)
+        opt_form.addRow("PCS guess prior λ (1/ppm²)", self.ed_pcs_prior_lambda)
 
         self.ed_Tref_linear = QLineEdit("298.0")
         opt_form.addRow("T_ref (K) for analysis", self.ed_Tref_linear)
 
-        self.chk_run_linear = QCheckBox("Run linear regression δ = a/T + b/T^2")
+        self.chk_run_linear = QCheckBox("Run linear regression δ = a/T + b/T²")
         self.chk_run_linear.setChecked(True)
         opt_form.addRow(self.chk_run_linear)
-
-        self.chk_invertx = QCheckBox("Invert X-axis for plots (VT style)")
-        self.chk_invertx.setChecked(False)
-        opt_form.addRow(self.chk_invertx)
 
         self.chk_run_baseline = QCheckBox("Run baseline (classical S2=0, D3=0) first")
         self.chk_run_baseline.setChecked(True)
         opt_form.addRow(self.chk_run_baseline)
+
+        self.chk_invertx = QCheckBox("Invert X-axis for plots (VT style)")
+        self.chk_invertx.setChecked(False)
+        opt_form.addRow(self.chk_invertx)
 
         group_row = QHBoxLayout()
         group_row.addWidget(map_box, 1)  # Column mapping
@@ -969,7 +989,7 @@ class MainWindow(QMainWindow):
         right_panel = QWidget(); right_layout = QVBoxLayout(right_panel)
 
         self.tbl_linear = CopyableTableView()
-        left_layout.addWidget(QLabel("Linear approximation (δ = a/T + b/T^2)"))
+        left_layout.addWidget(QLabel("Linear approximation (δ = a/T + b/T²)"))
         left_layout.addWidget(self.tbl_linear)
 
         self.tbl_globals = CopyableTableView()
