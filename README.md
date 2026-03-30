@@ -327,7 +327,7 @@ logic/
 ---
 ## About
 This project was created by **Boseok Hong** (**Department of Chemistry of the f-elements, Institute of Resource Ecology, HZDR**).  
-For inquiries, please contact [bshong66@gmail.com](mailto:bshong66@gmail.com) or [b.hong@hzdr.de](mailto:b.hong@hzdr.de).
+For inquiries, please contact [bshong66@gmail.com](mailto:bshong66@gmail.com).
 
 2026.2. Boseok Hong  
 
